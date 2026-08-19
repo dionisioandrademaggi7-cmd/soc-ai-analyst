@@ -13,6 +13,7 @@ sem precisar reescrever a lógica de negócio.
 import argparse
 import sys
 
+from local_log_client import LocalLogClient
 from config import settings
 from splunk_client import SplunkClient
 from mock_splunk_client import MockSplunkClient
@@ -21,12 +22,26 @@ import report_generator as rg
 
 
 def cmd_triage(args):
-    splunk = MockSplunkClient() if args.mock else SplunkClient(settings.splunk)
+    if args.mock:
+        splunk = MockSplunkClient()
+
+    elif getattr(args, "local", False):
+        splunk = LocalLogClient()
+    else:
+        splunk = SplunkClient(settings.splunk)
+
     analyst = AIAnalyst(settings.gemini)
 
-    fonte = "DADOS SIMULADOS (mock)" if args.mock else "Splunk real"
+    if args.mock:
+        fonte = "DADOS SIMULADOS (mock)"
+    elif getattr(args, "local", False):
+        fonte = "LOGS LOCAIS (auth.log)"
+    else:
+        fonte = "Splunk real"
+
     print(f"[*] Fonte de dados: {fonte}")
-    print(f"[*] Buscando até {args.count} alertas...")
+
+
     alerts = splunk.get_alerts(count=args.count)
     print(f"[*] {len(alerts)} alertas encontrados. Iniciando triagem...")
 
@@ -43,9 +58,14 @@ def cmd_triage(args):
     print(f"[✓] Relatório salvo em: {path}")
     print(f"[!] {len(escalated)} alerta(s) marcado(s) para escalonar.")
 
-
 def cmd_investigate(args):
-    splunk = MockSplunkClient() if args.mock else SplunkClient(settings.splunk)
+    if args.mock:
+        splunk = MockSplunkClient()
+    elif getattr(args, "local", False):
+        splunk = LocalLogClient()
+    else:
+         splunk = SplunkClient(settings.splunk)
+
     analyst = AIAnalyst(settings.gemini)
 
     if not args.host and not args.user:
@@ -79,6 +99,7 @@ def main():
     p_triage = subparsers.add_parser("triage", help="Busca e tria alertas pendentes no Splunk")
     p_triage.add_argument("--count", type=int, default=20, help="Número máximo de alertas a buscar")
     p_triage.add_argument("--mock", action="store_true", help="Usa dados simulados em vez de um Splunk real")
+    p_triage.add_argument("--local", action="store_true", help="Lê logs locais (auth.log) em vez de Splunk")
     p_triage.set_defaults(func=cmd_triage)
 
     p_inv = subparsers.add_parser("investigate", help="Investiga um incidente a partir de host/usuário")
@@ -87,6 +108,7 @@ def main():
     p_inv.add_argument("--earliest", type=str, default="-1h")
     p_inv.add_argument("--latest", type=str, default="+1h")
     p_inv.add_argument("--mock", action="store_true", help="Usa dados simulados em vez de um Splunk real")
+    p_inv.add_argument("--local", action="store_true", help="Lê logs locais (auth.log) em vez de Splunk")
     p_inv.set_defaults(func=cmd_investigate)
 
     args = parser.parse_args()
