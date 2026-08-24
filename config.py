@@ -33,7 +33,7 @@ class SplunkConfig:
 
 
 @dataclass
-class GeminiConfig:
+class GroqConfig:
     api_key: str
     model: str
 
@@ -47,9 +47,9 @@ class Settings:
             verify_ssl=_get("SPLUNK_VERIFY_SSL", "true").lower() == "true",
             alert_query=_get("SPLUNK_ALERT_QUERY", "search index=notable status=unassigned"),
         )
-        self.gemini = GeminiConfig(
-            api_key=_get("GEMINI_API_KEY", required=True),
-            model=_get("GEMINI_MODEL", "gemini-3-flash-preview"),
+        self.groq = GroqConfig(
+            api_key=_get("GROQ_API_KEY", required=True),
+            model=_get("GROQ_MODEL", "llama-3.3-70b-versatile"),
         )
         self.reports_dir = _get("REPORTS_DIR", "reports")
 

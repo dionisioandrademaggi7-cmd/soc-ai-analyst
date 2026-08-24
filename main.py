@@ -30,7 +30,7 @@ def cmd_triage(args):
     else:
         splunk = SplunkClient(settings.splunk)
 
-    analyst = AIAnalyst(settings.gemini)
+    analyst = AIAnalyst(settings.groq)
 
     if args.mock:
         fonte = "DADOS SIMULADOS (mock)"
@@ -66,7 +66,7 @@ def cmd_investigate(args):
     else:
          splunk = SplunkClient(settings.splunk)
 
-    analyst = AIAnalyst(settings.gemini)
+    analyst = AIAnalyst(settings.groq)
 
     if not args.host and not args.user:
         print("Erro: informe --host e/ou --user para buscar contexto.", file=sys.stderr)

@@ -1,61 +1,69 @@
 """
-Camada de análise com IA (Claude).
+Camada de análise com IA (Groq).
 Duas funções principais:
-  - triage_alert: classifica um alerta bruto (severidade, categoria, próximos passos)
-  - investigate_incident: dado um alerta + eventos de contexto, produz uma análise
-    de incidente mais profunda (timeline, hipótese de causa raiz, recomendações)
+  - triage_alert: classifica um alerta bruto
+  - investigate_incident: análise aprofundada de incidente
 """
 import json
 import re
 from dataclasses import dataclass, field, fields
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
-from config import GeminiConfig
+from groq import Groq
+from config import GroqConfig
 
 TRIAGE_SYSTEM_PROMPT = """\
-Você é um analista de SOC sênior revisando o trabalho de um analista júnior.
+Você é um analista de SOC sênior com experiência em resposta a incidentes.
 Sua tarefa é triar UM alerta de segurança bruto (em JSON) e devolver APENAS um \
 objeto JSON válido, sem texto antes ou depois, sem markdown, com este formato exato:
 
 {
   "severity": "critical" | "high" | "medium" | "low" | "informational",
-  "category": string,                // ex: "malware", "phishing", "brute_force",
-                                      // "insider_threat", "misconfiguration",
-                                      // "recon", "data_exfiltration", "false_positive", "other"
-  "false_positive_likelihood": number,   // 0 a 100
+  "category": string,
+  "false_positive_likelihood": number,
   "confidence": "high" | "medium" | "low",
-  "summary": string,                 // 2-3 frases, direto ao ponto
-  "indicators": [string],            // IOCs / evidências relevantes extraídas do evento
-  "mitre_attack": [string],          // técnicas ATT&CK aplicáveis, ex: "T1110 - Brute Force" (vazio se não houver)
-  "recommended_actions": [string],   // ações concretas e priorizadas para o analista júnior
-  "escalate": boolean                // true se deve ser escalado para um analista sênior
+  "summary": string,
+  "indicators": [string],
+  "mitre_attack": [string],
+  "attack_stage": string,
+  "recommended_actions": [string],
+  "containment_actions": [string],
+  "escalate": boolean,
+  "priority_score": number
 }
 
-Seja direto e específico. Baseie-se apenas nos dados do evento fornecido; não invente campos que não existem no log.\
+Regras de análise:
+- Seja rigoroso. Prefira severidade mais alta quando houver dúvida em ataques de autenticação, lateral movement ou exfiltração.
+- "attack_stage" deve indicar a fase provável (ex: "Initial Access", "Execution", "Persistence", "Credential Access", "Lateral Movement", "Exfiltration", "Impact").
+- "containment_actions" deve listar ações DEFENSIVAS concretas e imediatas (ex: "Bloquear IP de origem no firewall", "Desabilitar conta do usuário", "Isolar host da rede", "Forçar reset de senha", "Revogar sessões ativas").
+- "recommended_actions" são os próximos passos de investigação.
+- "priority_score" de 1 a 100 (100 = urgência máxima).
+- Baseie-se apenas nos dados fornecidos. Não invente evidências.
+- Responda sempre em português do Brasil nos campos de texto (summary, actions, etc.).
 """
 
 INVESTIGATE_SYSTEM_PROMPT = """\
-Você é um analista de SOC sênior conduzindo a investigação aprofundada de um incidente.
-Você recebe o alerta original e uma lista de eventos de contexto (mesmo host/usuário, \
-janela de tempo próxima). Produza um relatório em markdown, direto e estruturado, com \
-exatamente estas seções:
+Você é um analista de SOC sênior conduzindo investigação aprofundada de incidente.
+Você recebe o alerta original e eventos de contexto. Produza um relatório em markdown \
+em português do Brasil, com exatamente estas seções:
 
 ## Resumo Executivo
+## Classificação e Severidade
 ## Linha do Tempo
 ## Hipótese de Causa Raiz
 ## Escopo / Blast Radius
-## Indicadores de Comprometimento
-## Recomendações de Contenção e Remediação
-## Próximos Passos para o Analista Júnior
+## Indicadores de Comprometimento (IOCs)
+## Técnicas MITRE ATT&CK
+## Ações de Contenção Imediatas
+## Ações de Erradicação e Recuperação
+## Monitoramento Adicional Recomendado
+## Próximos Passos para o Analista
 
-Seja concreto: cite hosts, usuários, horários e comandos/eventos específicos observados \
-nos dados fornecidos. Não invente informações que não estejam nos dados. Se os dados de \
-contexto forem insuficientes para alguma seção, diga isso explicitamente e liste que \
-buscas adicionais o analista deveria fazer.\
+Regras:
+- Seja concreto: cite hosts, usuários, IPs, horários e eventos reais dos dados.
+- Em "Ações de Contenção Imediatas" liste só medidas defensivas (bloquear, isolar, desabilitar, revogar, resetar).
+- Não invente dados que não estejam no contexto.
+- Se faltar informação, diga explicitamente o que precisa ser coletado.
 """
-
 
 @dataclass
 class TriageResult:
@@ -68,16 +76,17 @@ class TriageResult:
     indicators: list = field(default_factory=list)
     mitre_attack: list = field(default_factory=list)
     recommended_actions: list = field(default_factory=list)
+    containment_actions: list = field(default_factory=list)
+    attack_stage: str = "Unknown"
+    priority_score: float = 50.0
     escalate: bool = False
 
-
 class AIAnalyst:
-    def __init__(self, cfg: GeminiConfig):
-        self.client = genai.Client(api_key=cfg.api_key)
+    def __init__(self, cfg: GroqConfig):
+        self.client = Groq(api_key=cfg.api_key)
         self.model = cfg.model
 
     def _extract_json(self, text: str) -> dict:
-        # Remove eventuais cercas de código, caso o modelo as inclua
         cleaned = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
         return json.loads(cleaned)
 
@@ -92,38 +101,45 @@ class AIAnalyst:
             "mitre_attack": [],
             "recommended_actions": ["Revisar manualmente — não foi possível obter uma triagem confiável da IA."],
             "escalate": True,
+            "containment_actions": [],
+            "attack_stage": "Unknown",
+            "priority_score": 50,
         }
 
     def triage_alert(self, alert: dict) -> TriageResult:
         try:
-            response = self.client.models.generate_content(
+            response = self.client.chat.completions.create(
                 model=self.model,
-                contents=json.dumps(alert, ensure_ascii=False, default=str),
-                config=types.GenerateContentConfig(
-                    system_instruction=TRIAGE_SYSTEM_PROMPT,
-                    max_output_tokens=1024,
-                    response_mime_type="application/json",
-                ),
+                messages=[
+                    {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(alert, ensure_ascii=False, default=str)},
+                ],
+                temperature=0.2,
+                max_tokens=1536,
             )
-        except genai_errors.APIError as e:
-            # falha de rede/API (timeout, 429, chave inválida, etc.) não deve derrubar o pipeline
-            parsed = self._fallback_result(f"Falha ao chamar a API do Gemini: {e}")
+            text = response.choices[0].message.content
+        except Exception as e:
+            parsed = self._fallback_result(f"Falha ao chamar a API do Groq: {e}")
             return TriageResult(raw_alert=alert, **parsed)
 
-        text = response.text
         try:
             parsed = self._extract_json(text)
         except (json.JSONDecodeError, TypeError):
-            # fallback defensivo: não deixa o pipeline quebrar por causa de 1 alerta malformado
             parsed = self._fallback_result(
-                f"Falha ao interpretar resposta da IA. Resposta bruta: {text[:300]}"
+                f"Falha ao interpretar resposta da IA. Resposta bruta: {str(text)[:300]}"
             )
 
-        # filtra apenas chaves que existem no dataclass, e garante que as obrigatórias existam
-        # (o modelo pode devolver campos a mais/a menos mesmo com instrução estrita)
         valid_fields = {f.name for f in fields(TriageResult)} - {"raw_alert"}
         filtered = {k: v for k, v in parsed.items() if k in valid_fields}
-        missing = valid_fields - filtered.keys() - {"indicators", "mitre_attack", "recommended_actions", "escalate"}
+        missing = valid_fields - filtered.keys() - {
+            "indicators",
+            "mitre_attack",
+            "recommended_actions",
+            "containment_actions",
+            "attack_stage",
+            "priority_score",
+            "escalate",
+        }
         required = {"severity", "category", "false_positive_likelihood", "confidence", "summary"}
         if missing & required:
             filtered = self._fallback_result(
@@ -138,18 +154,19 @@ class AIAnalyst:
             "eventos_de_contexto": context_events,
         }
         try:
-            response = self.client.models.generate_content(
+            response = self.client.chat.completions.create(
                 model=self.model,
-                contents=json.dumps(payload, ensure_ascii=False, default=str),
-                config=types.GenerateContentConfig(
-                    system_instruction=INVESTIGATE_SYSTEM_PROMPT,
-                    max_output_tokens=2048,
-                ),
+                messages=[
+                    {"role": "system", "content": INVESTIGATE_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
+                ],
+                temperature=0.3,
+                max_tokens=2048,
             )
-        except genai_errors.APIError as e:
+            return response.choices[0].message.content
+        except Exception as e:
             return (
                 "## Resumo Executivo\n\n"
-                f"⚠️ Não foi possível gerar a investigação: falha ao chamar a API do Gemini ({e}).\n\n"
+                f"⚠️ Não foi possível gerar a investigação: falha ao chamar a API do Groq ({e}).\n\n"
                 "Revise o alerta e os eventos de contexto manualmente."
             )
-        return response.text
