@@ -91,6 +91,25 @@ def cmd_investigate(args):
 
     print(f"[✓] Relatório salvo em: {path}")
 
+def cmd_contain(args):
+    from containment import block_ip, unblock_ip, status
+
+    dry = not args.execute  # padrao seguro: dry-run
+    if args.status:
+        print(status())
+        return
+    if args.block:
+        r = block_ip(args.block, dry_run=dry)
+        tag = "DRY-RUN" if r.dry_run else "LIVE"
+        print(f"[{tag}] block {r.target}: {r.message} ({'ok' if r.success else 'falhou'})")
+        return
+    if args.unblock:
+        r = unblock_ip(args.unblock, dry_run=dry)
+        tag = "DRY-RUN" if r.dry_run else "LIVE"
+        print(f"[{tag}] unblock {r.target}: {r.message} ({'ok' if r.success else 'falhou'})")
+        return
+    print("Use --block IP, --unblock IP ou --status")
+
 
 def main():
     parser = argparse.ArgumentParser(description="SOC AI Analyst — triagem e investigação assistidas por IA")
@@ -111,9 +130,18 @@ def main():
     p_inv.add_argument("--local", action="store_true", help="Lê logs locais (auth.log) em vez de Splunk")
     p_inv.set_defaults(func=cmd_investigate)
 
+    p_contain = subparsers.add_parser("contain", help="Contencao local (bloquear/desbloquear IP via ufw)")
+    p_contain.add_argument("--block", type=str, default=None, help="IP para bloquear")
+    p_contain.add_argument("--unblock", type=str, default=None, help="IP para desbloquear")
+    p_contain.add_argument("--status", action="store_true", help="Mostra regras ufw")
+    p_contain.add_argument("--dry-run", action="store_true", default=True, help="Nao executa, so mostra (padrao)")
+    p_contain.add_argument("--execute", action="store_true", help="Executa de verdade (desliga dry-run)")
+    p_contain.set_defaults(func=cmd_contain)
+
     args = parser.parse_args()
     args.func(args)
 
 
 if __name__ == "__main__":
     main()
+
