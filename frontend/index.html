@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SOC AI Analyst</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">SOC</div>
+      <div class="brand-sub">AI Analyst</div>
+      <label>Fonte</label>
+      <select id="source">
+        <option value="local">Logs locais</option>
+        <option value="mock">Mock</option>
+        <option value="windows">Windows Event Log</option>
+      </select>
+      <label>Alertas</label>
+      <input id="count" type="number" min="1" max="20" value="5" />
+      <button id="btnTriage" class="btn">Triagem</button>
+      <button id="btnSessions" class="btn ghost">Sessoes SSH</button>
+      <button id="btnDefense" class="btn ghost">Defesa host</button>
+      <div class="rail-foot">fase 4</div>
+    </aside>
+    <main>
+      <header class="top">
+        <div>
+          <h1>Centro de operacoes</h1>
+          <p id="status">Pronto</p>
+        </div>
+        <div class="pills">
+          <span class="pill" id="pillFonte">—</span>
+          <span class="pill" id="pillCount">0 alertas</span>
+        </div>
+      </header>
+      <section class="grid">
+        <div class="card">
+          <div class="card-title">Mapa</div>
+          <div class="globe"><div id="map"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Diagnostico</div>
+          <div id="diag" class="diag">Sem triagem ainda.</div>
+        </div>
+      </section>
+      <section class="grid two">
+        <div class="card">
+          <div class="card-title">Alertas</div>
+          <div id="alerts"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Contain</div>
+          <input id="ip" placeholder="IP alvo" />
+          <div class="row">
+            <button id="btnDry" class="btn ghost">Simular block</button>
+            <button id="btnLive" class="btn danger">Executar block</button>
+          </div>
+          <div id="containOut" class="out"></div>
+          <div class="card-title tight">Sessoes fora da whitelist</div>
+          <div id="foreign" class="out">—</div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

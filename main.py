@@ -18,6 +18,8 @@ from config import settings
 from splunk_client import SplunkClient
 from mock_splunk_client import MockSplunkClient
 from ai_analyst import AIAnalyst
+from term import info, ok, warn, err
+
 import report_generator as rg
 
 
@@ -27,6 +29,9 @@ def cmd_triage(args):
 
     elif getattr(args, "local", False):
         splunk = LocalLogClient()
+    elif getattr(args, "windows", False):
+        from windows_log_client import WindowsLogClient
+        splunk = WindowsLogClient()
     else:
         splunk = SplunkClient(settings.splunk)
 
@@ -36,6 +41,8 @@ def cmd_triage(args):
         fonte = "DADOS SIMULADOS (mock)"
     elif getattr(args, "local", False):
         fonte = "LOGS LOCAIS (auth.log)"
+    elif getattr(args, "windows", False):
+        fonte = "Windows Security Event Log"
     else:
         fonte = "Splunk real"
 
@@ -63,8 +70,11 @@ def cmd_investigate(args):
         splunk = MockSplunkClient()
     elif getattr(args, "local", False):
         splunk = LocalLogClient()
+    elif getattr(args, "windows", False):
+        from windows_log_client import WindowsLogClient
+        splunk = WindowsLogClient()
     else:
-         splunk = SplunkClient(settings.splunk)
+        splunk = SplunkClient(settings.splunk)
 
     analyst = AIAnalyst(settings.groq)
 
@@ -110,6 +120,11 @@ def cmd_contain(args):
         return
     print("Use --block IP, --unblock IP ou --status")
 
+def cmd_watch(args):
+    from session_watch import watch_once
+    dry = not args.execute
+    watch_once(dry_run=dry, auto_block=args.block)
+
 
 def main():
     parser = argparse.ArgumentParser(description="SOC AI Analyst — triagem e investigação assistidas por IA")
@@ -137,6 +152,12 @@ def main():
     p_contain.add_argument("--dry-run", action="store_true", default=True, help="Nao executa, so mostra (padrao)")
     p_contain.add_argument("--execute", action="store_true", help="Executa de verdade (desliga dry-run)")
     p_contain.set_defaults(func=cmd_contain)
+    p_triage.add_argument("--windows", action="store_true", help="Le Event Log de Seguranca do Windows")
+    p_inv.add_argument("--windows", action="store_true", help="Le Event Log de Seguranca do Windows")
+    p_watch = subparsers.add_parser("watch", help="Sessoes SSH ativas vs whitelist")
+    p_watch.add_argument("--block", action="store_true", help="Tenta conter o IP")
+    p_watch.add_argument("--execute", action="store_true", help="Block real (senao dry-run)")
+    p_watch.set_defaults(func=cmd_watch)
 
     args = parser.parse_args()
     args.func(args)
