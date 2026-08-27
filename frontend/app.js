@@ -1,7 +1,9 @@
 const $ = (id) => document.getElementById(id);
 
 const map = L.map("map", { zoomControl: true, attributionControl: false }).setView([20, 0], 2);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 18 }).addTo(map);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 18,
+}).addTo(map);
 const layer = L.layerGroup().addTo(map);
 
 function setStatus(t) { $("status").textContent = t; }
