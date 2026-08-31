@@ -96,7 +96,7 @@ async function contain(execute) {
 
 setInterval(() => {
   $("btnSessions") && $("btnSessions").click();
-}, 10000);
+}, 10000);""
 
 $("btnDry").onclick = () => contain(false);
 $("btnLive").onclick = () => { if (confirm("Bloquear IP de verdade neste host?")) contain(true); };
