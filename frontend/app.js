@@ -94,5 +94,9 @@ async function contain(execute) {
   } catch (e) { setStatus("erro: " + e.message); }
 }
 
+setInterval(() => {
+  $("btnSessions") && $("btnSessions").click();
+}, 10000);
+
 $("btnDry").onclick = () => contain(false);
 $("btnLive").onclick = () => { if (confirm("Bloquear IP de verdade neste host?")) contain(true); };

@@ -74,6 +74,21 @@ def _run(cmd: list[str], dry_run: bool) -> tuple[bool, str]:
         return False, str(e)
 
 
+def drop_ssh_from_ip(ip: str) -> str:
+    notes = []
+    for cmd in (
+        ["sudo", "-n", "ss", "-K", "dst", ip, "dport", "22"],
+        ["sudo", "-n", "pkill", "-f", f"sshd:.*{ip}"],
+    ):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            extra = ((proc.stdout or "") + (proc.stderr or "")).strip()
+            notes.append(extra or f"{' '.join(cmd)} exit {proc.returncode}")
+        except Exception as e:
+            notes.append(str(e))
+    return " | ".join(notes)
+
+
 def _log(action: str, target: str, message: str, dry_run: bool) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -91,9 +106,11 @@ def block_ip(ip: str, dry_run: bool = True, extra_whitelist: set[str] | None = N
         return ContainmentResult(False, "block", ip, "IP na whitelist — bloqueio recusado", dry_run=dry_run)
     # ufw deny from <ip>
     ok, msg = _run(["sudo", "ufw", "deny", "from", ip], dry_run)
+    if ok and not dry_run:
+        drop = drop_ssh_from_ip(ip)
+        msg = f"{msg} | {drop}"
     _log("block", ip, msg, dry_run)
     return ContainmentResult(ok, "block", ip, msg, dry_run=dry_run)
-
 
 def unblock_ip(ip: str, dry_run: bool = True) -> ContainmentResult:
     ip = ip.strip()

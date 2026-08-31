@@ -16,7 +16,18 @@ def locate_ip(ip: str) -> dict:
     if not ip or ip in ("local", "-", "None"):
         return {"ip": ip, "kind": "local", "lat": None, "lon": None, "label": "local"}
     if is_private_ip(ip):
-        return {"ip": ip, "kind": "lan", "lat": None, "lon": None, "label": "LAB / LAN"}
+        parts = ip.split(".")
+        last = int(parts[-1]) if parts[-1].isdigit() else 0
+        prev = int(parts[-2]) if len(parts) > 1 and parts[-2].isdigit() else 0
+        lat = 38.7 + (last % 50) * 0.01
+        lon = -9.1 + (prev % 50) * 0.01
+        return {
+            "ip": ip,
+            "kind": "lan",
+            "lat": lat,
+            "lon": lon,
+            "label": f"{ip} (LAB / LAN)",
+        }
     try:
         url = f"http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon,query"
         with urllib.request.urlopen(url, timeout=6) as resp:
