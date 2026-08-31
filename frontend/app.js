@@ -94,9 +94,17 @@ async function contain(execute) {
   } catch (e) { setStatus("erro: " + e.message); }
 }
 
-setInterval(() => {
-  $("btnSessions") && $("btnSessions").click();
-}, 10000);""
+setInterval(async () => {
+  try {
+    const data = await api("/api/auth-live");
+    const ev = data.events || [];
+    $("foreign").textContent = ev.length
+      ? ev.map((e) => `${e.kind} ${e.ip}`).join("\n")
+      : (data.hint || "sem eventos no auth.log");
+  } catch (e) {
+    $("foreign").textContent = String(e.message);
+  }
+}, 5000);
 
 $("btnDry").onclick = () => contain(false);
 $("btnLive").onclick = () => { if (confirm("Bloquear IP de verdade neste host?")) contain(true); };

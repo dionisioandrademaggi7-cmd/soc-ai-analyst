@@ -183,6 +183,25 @@ def index():
         return {"ok": True, "hint": "frontend/index.html ausente"}
     return FileResponse(index)
 
+@app.get("/api/auth-live")
+def api_auth_live():
+    path = Path("/var/log/auth.log")
+    if not path.exists():
+        return {"ok": False, "events": [], "hint": "sem auth.log"}
+    try:
+        lines = path.read_text(errors="replace").splitlines()[-80:]
+    except PermissionError:
+        return {"ok": False, "events": [], "hint": "sem permissao no auth.log"}
+    ev = []
+    rx = re.compile(
+        r"(Failed password|Invalid user|Accepted password|Accepted publickey).*?(\d{1,3}(?:\.\d{1,3}){3})",
+        re.I,
+    )
+    for line in lines:
+        m = rx.search(line)
+        if m:
+            ev.append({"kind": m.group(1), "ip": m.group(2), "line": line[-180:]})
+    return {"ok": True, "events": ev[-20:]}
 
 if FRONTEND.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND)), name="static")
