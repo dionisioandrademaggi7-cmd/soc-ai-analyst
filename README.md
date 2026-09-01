@@ -1,32 +1,46 @@
-# SOC AI Analyst (Fase 1 — CLI Linux)
+# SOC AI Analyst
 
-Assistente de IA para triagem e investigação de alertas de segurança, integrado ao Splunk.
-Esta é a fase 1: validar a lógica via linha de comando antes de expor como aplicação web.
+Assistente de IA para triagem e investigação de alertas de segurança, pensado para um **lab purple team** (Ubuntu = alvo com o analista; Kali = peer de lab). A IA é **apoio à decisão**, não a decisão final: o humano fica no loop (human-in-the-loop) para escalonar, validar logons e **confirmar** qualquer bloqueio ufw live.
+
+Nunca commitar o `.env` (já deve estar no `.gitignore`). Tokens e chaves são segredo.
+
+---
 
 ## Arquitetura
 
 ```
-config.py           → carrega .env e valida configuração
-splunk_client.py     → busca alertas e eventos de contexto na API REST do Splunk
-ai_analyst.py        → prompts e chamadas ao Gemini (triagem + investigação)
-report_generator.py  → monta os relatórios em markdown
-main.py               → CLI que orquestra tudo
+config.py             → carrega .env e valida configuração (Splunk + Groq)
+splunk_client.py      → busca alertas e eventos de contexto na API REST do Splunk
+local_log_client.py   → lê auth.log localmente, mesma interface do SplunkClient
+mock_splunk_client.py → dados simulados para desenvolvimento sem Splunk/logs reais
+windows_log_client.py → Event Log de Segurança do Windows (4625 falha / 4624 sucesso)
+ai_analyst.py         → prompts e chamadas ao Groq (triagem + investigação)
+report_generator.py   → monta os relatórios em markdown
+main.py               → CLI (fase 1; também contain / watch)
+app.py                → interface web em Streamlit (fase 2; ainda no repositório)
+containment.py        → bloqueio/desbloqueio de IP via ufw (dry-run por omissão)
+session_watch.py      → sessões SSH ativas vs whitelist
+geo.py                → geolocalização de IPs (ip-api) para o mapa
+sec_tools.py          → snapshot de defesa do host
+alerter.py            → motor de alerta autónomo (BURST / LOGIN)
+watcher.py            → CLI do alerter (sem API)
+api.py                → FastAPI + UI (fase 4)
+frontend/             → dashboard (index.html, app.js, styles.css)
 ```
 
-Esses módulos foram escritos para não conhecer nada de CLI/terminal — toda a lógica de
-negócio fica isolada, então na fase 2 dá pra importar exatamente as mesmas classes
-(`SplunkClient`, `AIAnalyst`, `report_generator`) dentro de uma API FastAPI/Flask sem
-reescrever nada.
+A lógica de negócio (clientes, `AIAnalyst`, relatórios, containment) fica isolada da CLI/UI — a API e o Streamlit reutilizam as mesmas classes.
+
+---
 
 ## Instalação
 
 ```bash
-cd soc_ai_analyst
+cd soc-ai-analyst
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# edite o .env com host/token do Splunk e sua chave da API Gemini
+# edite o .env: GROQ_API_KEY, e (opcional) host/token do Splunk
 ```
 
 ### Obtendo o token do Splunk
@@ -41,141 +55,260 @@ A variável `SPLUNK_ALERT_QUERY` no `.env` define quais eventos contam como "ale
 - Sem ES, com alertas salvos indexando em algum sourcetype próprio: ajuste para o seu caso,
   ex: `search index=main sourcetype=alert_ids`
 
-## Uso
+---
+
+## Fase 1 — CLI
+
+Validar a lógica via linha de comando (Splunk, mock ou logs locais) antes de expor como aplicação web.
+
+### Fontes de dados
+
+| Fonte | Quando usar | Flag (CLI) |
+|---|---|---|
+| Mock | Desenvolver sem depender de nada externo | `--mock` |
+| Logs locais | Testar contra `auth.log` da máquina | `--local` |
+| Windows Event Log | Host Windows (4625 / 4624) | `--windows` |
+| Splunk | Ambiente com Splunk configurado | padrão |
 
 ### Triagem em lote
+
 Busca os alertas pendentes e classifica cada um (severidade, categoria, se é falso
 positivo, ações recomendadas):
 
 ```bash
 python main.py triage --count 20
+python main.py triage --local --count 10
+python main.py triage --mock --count 5
 ```
 
 Gera um arquivo em `reports/triage_<timestamp>.md` com uma tabela-resumo ordenada por
 severidade e o detalhamento de cada alerta.
 
-### Investigação de incidente
-Dado um host e/ou usuário, busca eventos correlacionados numa janela de tempo e pede ao
-Gemini uma análise aprofundada (timeline, causa raiz, blast radius, contenção):
-
-```bash
-python main.py investigate --host 10.0.0.5 --user jdoe --earliest -2h --latest +1h
-```
-
-Gera `reports/investigation_<timestamp>.md`.
-
-## Próximos passos (fase 2 — web)
-
-- Envolver `SplunkClient` + `AIAnalyst` + `report_generator` numa API (FastAPI é uma boa
-  escolha: endpoints assíncronos, fácil gerar OpenAPI para o frontend).
-- Endpoints sugeridos: `POST /triage`, `POST /investigate`, `GET /reports/{id}`.
-- Fila de background (ex: RQ/Celery) para não bloquear a UI enquanto o Gemini processa
-  lotes grandes de alertas.
-- Autenticação/RBAC antes de expor para a equipe.
-
-## Notas de segurança
-
-- Nunca commitar o `.env` (já deve estar num `.gitignore`).
-- O token do Splunk e a API key do Gemini dão acesso a dados sensíveis — trate como
-  segredo (idealmente um vault/secrets manager na fase web).
-- As respostas da IA são um apoio à triagem, não uma decisão final — o `escalate: true`
-  e o campo `false_positive_likelihood` existem justamente para manter um humano no loop
-  nos casos de maior risco.
-
----
-
-# Fase 2 — Interface Web (Streamlit)
-
-A fase 2 chegou: a lógica de negócio da fase 1 (`ai_analyst.py`, `report_generator.py`)
-foi reaproveitada sem reescrever nada, exatamente como planejado — só ganhou uma camada
-de interface web em cima (`app.py`, Streamlit) e novas fontes de dados.
-
-## Novidades
-
-### Nova fonte de dados: logs locais
-Além do Splunk e do mock, agora dá pra rodar **sem Splunk nenhum**, lendo direto do
-`auth.log` da máquina — útil pra testar contra ataques reais (ex: força bruta SSH via
-Kali/Hydra) sem precisar montar um Splunk completo.
-
-```
-local_log_client.py → lê /var/log/auth.log, mesma interface do SplunkClient
-```
-
-Fontes de dados disponíveis agora:
-
-| Fonte | Quando usar | Flag/opção |
-|---|---|---|
-| Mock | Desenvolver sem depender de nada externo | `--mock` (CLI) / "Mock" (GUI) |
-| Logs locais | Testar contra `auth.log` real da máquina | `--local` (CLI) / "Logs locais" (GUI) |
-| Splunk | Ambiente com Splunk configurado | padrão (CLI) / "Splunk" (GUI) |
-
-### Migração de Gemini para Groq
-A camada de IA (`ai_analyst.py`) migrou do Gemini para a **API do Groq** (modelo
-`llama-3.3-70b-versatile`) — resolve problemas de autenticação persistentes que o
-Gemini estava apresentando (chaves no formato `AQ.` retornando erro
-`ACCESS_TOKEN_TYPE_UNSUPPORTED`). A API key agora fica em `GROQ_API_KEY` no `.env`
-(no lugar de `GEMINI_API_KEY`).
-
-Novos campos na triagem, além dos da fase 1:
+Campos extra na triagem (além da fase 1 original):
 - `attack_stage` — fase provável do ataque (ex: "Initial Access", "Lateral Movement")
 - `containment_actions` — ações defensivas imediatas (bloquear IP, isolar host, etc.)
 - `priority_score` — pontuação de 1 a 100 pra ordenar urgência
 
-### Interface web (`app.py`)
+### Investigação de incidente
+
+Dado um host e/ou usuário, busca eventos correlacionados numa janela de tempo e pede ao
+Groq uma análise aprofundada (timeline, causa raiz, blast radius, contenção):
+
+```bash
+python main.py investigate --host 10.0.0.5 --user jdoe --earliest -2h --latest +1h
+python main.py investigate --local --host ubuntu-lab
+```
+
+Gera `reports/investigation_<timestamp>.md`.
+
+---
+
+## Fase 2 — Interface Web (Streamlit)
+
+A fase 2 reaproveitou a lógica da fase 1 sem reescrever nada — só ganhou uma camada
+de interface web (`app.py`, Streamlit) e a fonte de logs locais. **`app.py` continua
+no repositório**; a UI principal do lab passou a ser a FastAPI (fase 4), mas o
+Streamlit não foi removido.
+
 ```bash
 streamlit run app.py
 ```
+
 Abre em `http://localhost:8501`.
 
 - **Threat Map** — plota geograficamente os IPs de origem identificados nos alertas
-  triados (geolocalização via `ip-api.com`), com sua própria localização como base.
-- **Aba Triagem** — roda a triagem em lote com um clique: diagnóstico principal (pior
-  severidade), métricas (alertas, escalonados, IPs no mapa), e cada alerta classificado
-  com ações recomendadas e de contenção.
-- **Aba Investigação** — busca contexto por host/usuário e gera o relatório aprofundado
-  direto na tela.
+  triados (geolocalização via `ip-api.com`).
+- **Aba Triagem** — triagem em lote: diagnóstico principal, métricas, ações recomendadas.
+- **Aba Investigação** — contexto por host/usuário e relatório aprofundado na tela.
 
-## Arquitetura atualizada
+A camada de IA (`ai_analyst.py`) usa a **API do Groq** (modelo por omissão
+`llama-3.3-70b-versatile`). A chave fica em `GROQ_API_KEY` no `.env`.
 
+---
+
+## Fase 3 — Containment (ufw, dry-run / whitelist)
+
+Ações defensivas **locais** no Ubuntu do lab: bloquear/desbloquear IP via `ufw`.
+**Dry-run por omissão.** Bloqueio live só com `--execute` (CLI) ou o botão
+«Executar block» no dashboard — sempre com humano a confirmar.
+
+```bash
+python main.py contain --block 203.0.113.10            # dry-run
+python main.py contain --block 203.0.113.10 --execute  # live (humano no loop)
+python main.py contain --unblock 203.0.113.10
+python main.py contain --status
+python main.py watch                                   # sessões SSH vs whitelist
+python main.py watch --block                           # contain dry-run se sessão estrangeira
+python main.py watch --block --execute                 # contain live (humano no loop)
 ```
-config.py            → carrega .env e valida configuração (Splunk + Groq)
-splunk_client.py      → busca alertas e eventos de contexto na API REST do Splunk
-local_log_client.py   → lê auth.log localmente, mesma interface do SplunkClient
-mock_splunk_client.py → dados simulados para desenvolvimento sem Splunk/logs reais
-ai_analyst.py         → prompts e chamadas ao Groq (triagem + investigação)
-report_generator.py   → monta os relatórios em markdown
-main.py               → CLI (fase 1)
-app.py                → interface web em Streamlit (fase 2)
+
+Whitelist (nunca bloquear): `127.0.0.1`, `::1`, e no lab NAT **`10.0.2.2` / `10.0.2.15`**.
+O `containment.py` recusa esses IPs mesmo com `--execute`.
+
+---
+
+## Fase 4 — FastAPI UI
+
+Dashboard no browser (Leaflet/OSM), triagem/investigação via API, sessões SSH,
+containment e o **alerta autónomo** (faixa no topo).
+
+```bash
+uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
-## Changelog
+Abre em `http://127.0.0.1:8000`. **Dashboard no ar = watcher autónomo a correr**
+(o startup da API chama `alerter.start_background`; não há botão para “começar a vigiar”).
 
-### [Não lançado] — Fase 2: Interface Web
-- Nova interface em Streamlit (`app.py`) com tema visual próprio (dark/cyberpunk)
-- Mapa de ameaças com geolocalização dos IPs de origem
-- Migração da IA de Gemini para Groq (Llama 3.3 70B)
+Endpoints úteis:
+- `GET /api/health`
+- `GET /api/alerts/live` — anel em memória (BURST / LOGIN) + `running` / fonte / limiar
+- `POST /api/triage` / `POST /api/investigate`
+- `GET /api/sessions` — sessões SSH e as que estão fora da whitelist
+- `POST /api/watch` — um ciclo de session watch
+- `POST /api/contain` — `{ ip, action: block|unblock, execute: false }`
+- `GET /api/defense` — snapshot ufw / fail2ban + último mapa
+- `GET /api/auth-live` — últimas linhas parseadas do `auth.log`
+
+O mapa usa tiles OpenStreetMap e geolocalização via `ip-api` (`geo.py`).
+Fonte no UI: logs locais, mock ou Windows Event Log (`windows_log_client.py`).
+
+---
+
+## Alerta autónomo (`alerter.py`)
+
+O `watcher.py` antigo só imprimia linhas novas se o operador o lançasse à mão,
+e cada evento era isolado. Agora o motor correlaciona falhas **por IP** e dispara
+sozinho (som + banner + faixa no UI).
+
+| Tipo | Quando dispara |
+|---|---|
+| **BURST** | 5 falhas de autenticação do mesmo IP em 120s (`Failed password` / `Invalid user` / `authentication failure`; no Windows, evento 4625) |
+| **LOGIN** | `Accepted password` / `Accepted publickey` (ou Windows 4624) de um IP **fora** da whitelist |
+
+O alerta soa sozinho (`notify-send` + BEL no Linux; Beep/balloon no Windows) e
+instruí a abrir **Triagem / Investigar** no SOC AI Analyst para o relatório
+detalhado. Containment **não** corre sozinho com o dashboard: o alerter da API
+arranca com `auto_block=False`. Bloqueio ufw live só com:
+
+```bash
+python watcher.py --block --execute
+```
+
+ou o botão **«Executar block»** no UI (confirmação humana).
+
+Linhas históricas (já no log quando o tail começa) **só alimentam a janela de
+falhas** — não disparam som. Há cooldown por IP+tipo (~60s) para não spammar BURST.
+Um LOGIN depois de um BURST no mesmo IP **é permitido** (tipo diferente).
+
+Linux: `auth.log` / `secure` / `journalctl -u ssh`. Windows (sem esses logs):
+Event Log 4625 (falha) e 4624 (sucesso) via `WindowsLogClient`.
+
+### API vs CLI watcher
+
+```bash
+# suficiente para alertas autónomos (dashboard + watcher em background)
+uvicorn api:app --host 127.0.0.1 --port 8000
+
+# só CLI (sem API / sem UI)
+python watcher.py
+
+# contain em dry-run após BURST/LOGIN
+python watcher.py --block
+
+# ufw deny a sério (human-in-the-loop)
+python watcher.py --block --execute
+```
+
+No UI, **Executar block** continua a ser o caminho live. O alerter da API
+não bloqueia sozinho — o som dispara, o block ufw não.
+
+### Variáveis de ambiente (opcional)
+
+| env | default | significado |
+|---|---|---|
+| `SOC_FAIL_THRESHOLD` | 5 | falhas por IP para BURST |
+| `SOC_WINDOW_SEC` | 120 | janela deslizante (segundos) |
+| `SOC_COOLDOWN_SEC` | 60 | silêncio após alerta (por IP+tipo) |
+
+---
+
+## Testes
+
+Os testes do alerter são **defensivos**: alimentam linhas sintéticas de `auth.log`
+em `alerter.handle_line` / `_handle_parsed`. Não abrem sockets, não fazem SSH,
+não chamam `ufw` de verdade (`containment.block_ip` é stub quando o teste toca
+em `auto_block`).
+
+`pytest` **não** está em `requirements.txt`. O ficheiro é `unittest` da stdlib:
+
+```bash
+python -m unittest tests.test_alerter -q
+```
+
+Se tiver pytest instalado no ambiente:
+
+```bash
+python -m pytest tests/test_alerter.py -q
+```
+
+---
+
+## Validação no lab (alto nível)
+
+Ambiente purple team já existente: **Ubuntu = alvo** (corre o analista);
+**Kali = peer de lab** que gera falhas de autenticação SSH / um logon bem-sucedido
+contra esse host, **do modo como o lab já faz** — sem procedimentos de ataque
+neste README.
+
+No Ubuntu (alvo / analista):
+
+1. `uvicorn api:app --host 127.0.0.1 --port 8000`
+2. Confirmar `GET /api/alerts/live` com `"running": true`
+3. Correr `python -m pytest tests/test_alerter.py -q` (ou o `unittest` acima)
+4. No lab, produzir falhas de autenticação SSH a partir do Kali e, depois, um
+   logon bem-sucedido a partir desse host
+5. Confirmar **BURST** e depois **LOGIN** na faixa «Alerta autónomo» do dashboard
+6. Contain em dry-run (Simular block / `python main.py contain --block <IP>`)
+7. Humano confirma o block live («Executar block» ou `--execute`)
+
+Whitelist `10.0.2.2` / `10.0.2.15` não deve ser bloqueada mesmo em live.
+
+---
+
+## Notas de segurança
+
+- Nunca commitar o `.env`.
+- `GROQ_API_KEY` e o token do Splunk dão acesso a dados sensíveis — trate como
+  segredo (idealmente um vault/secrets manager se isto sair do lab).
+- Containment chama `sudo ufw` — o operador precisa de sudo no Ubuntu do lab;
+  dry-run é o default; live exige confirmação humana.
+- Whitelist: `127.0.0.1` / `::1` nunca geram alerta LOGIN/BURST (session watch);
+  `10.0.2.2` / `10.0.2.15` nunca são bloqueados (lab NAT).
+- O mapa consulta `ip-api.com` (e, no Streamlit, a GUI também pode consultar a
+  localização pública via `ipify`/`ip-api.com`) — isso envia IPs a um serviço
+  terceiro.
+- As respostas da IA são um **apoio à triagem, não uma decisão final** — o
+  `escalate: true` e o campo `false_positive_likelihood` existem justamente para
+  manter um humano no loop nos casos de maior risco. O alerta autónomo manda
+  abrir Triagem/Investigar; não bloqueia sozinho.
+
+---
+
+## Changelog (resumo)
+
+### [Não lançado] — Alerta autónomo + FastAPI (fases 3–4)
+- `alerter.py`: BURST (5 falhas / 120s) e LOGIN fora da whitelist; som + faixa no UI
+- Dashboard FastAPI (`api.py` + `frontend/`); mapa OSM; session watch; Windows Event Log
+- Containment ufw com dry-run / whitelist; block live só com humano
+- Testes sintéticos em `tests/test_alerter.py`
+
+### Fase 2 — Interface Web (Streamlit)
+- `app.py` (ainda no GitHub) com tema visual próprio
+- Mapa de ameaças; migração da IA de Gemini para Groq (Llama 3.3 70B)
 - Novos campos na triagem: `attack_stage`, `containment_actions`, `priority_score`
-- Abas separadas para Triagem e Investigação na GUI
 
 ### v0.2.0 — Fonte de dados local
-- Adicionado `local_log_client.py`: permite rodar sem Splunk, lendo direto de
-  `/var/log/auth.log`
-- Nova flag `--local` em `triage` e `investigate`
-- Avisos explícitos quando o log não existe ou falta permissão de leitura
+- `local_log_client.py` + flag `--local`
 
 ### v0.1.0 — Versão inicial (Fase 1)
 - Triagem e investigação via Splunk ou dados mock
-- Integração inicial com IA (Gemini) para análise de alertas
-
-## Próximos passos (atualizado)
-
-- Corrigir renderização de acentuação nos expanders da GUI (verificar encoding)
-- Autenticação/RBAC antes de expor a equipe
-- Fila de background (RQ/Celery) para lotes grandes de alertas sem travar a UI
-- Testes automatizados para `ai_analyst.py` (parsing de resposta, fallback)
-
-## Notas de segurança (atualizado)
-
-- A GUI consulta sua própria localização pública (via `ipify`/`ip-api.com`) para
-  plotar a "base" no mapa — isso envia seu IP público a um serviço terceiro a cada
-  carregamento da página.

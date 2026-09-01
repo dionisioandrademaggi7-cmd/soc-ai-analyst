@@ -108,3 +108,108 @@ setInterval(async () => {
 
 $("btnDry").onclick = () => contain(false);
 $("btnLive").onclick = () => { if (confirm("Bloquear IP de verdade neste host?")) contain(true); };
+
+/* Alerta autonomo: poll 2s, beep + flash em alerta NOVO */
+let lastLiveSig = null;
+let audioCtx = null;
+
+document.addEventListener("click", () => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { /* browsers sem AudioContext */ }
+}, { once: true });
+
+function beepLive() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "square";
+    o.frequency.value = 880;
+    g.gain.value = 0.08;
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start();
+    setTimeout(() => {
+      try { o.stop(); } catch (e) {}
+    }, 180);
+  } catch (e) { /* nunca falhar o dashboard */ }
+}
+
+function flashLive() {
+  const card = $("liveAlertCard");
+  const st = $("status");
+  if (card) {
+    card.classList.remove("hot");
+    void card.offsetWidth;
+    card.classList.add("hot");
+    setTimeout(() => card.classList.remove("hot"), 2500);
+  }
+  if (st) {
+    st.classList.add("flash");
+    setTimeout(() => st.classList.remove("flash"), 2500);
+  }
+}
+
+function liveSig(alerts) {
+  if (!alerts.length) return "";
+  const a = alerts[alerts.length - 1];
+  return `${a.timestamp}|${a.kind}|${a.ip}|${alerts.length}`;
+}
+
+function renderLive(data) {
+  const running = !!data.running;
+  const src = data.source || "—";
+  const hint = data.hint ? ` · ${data.hint}` : "";
+  const limiar = data.fail_threshold && data.window_sec
+    ? ` · ${data.fail_threshold} falhas / ${data.window_sec}s`
+    : "";
+  $("liveAlertState").textContent = (running ? "a vigiar" : "parado") + ` · fonte: ${src}${limiar}${hint}`;
+
+  const alerts = data.alerts || [];
+  const box = $("liveAlerts");
+  if (!alerts.length) {
+    box.innerHTML = "<div class='out'>sem alertas autónomos ainda — a vigiar falhas SSH e logons</div>";
+  } else {
+    const last = alerts.slice(-8).reverse();
+    box.innerHTML = last.map((a) => {
+      const k = (a.kind || "").toUpperCase();
+      const sev = k === "LOGIN" ? "high" : "medium";
+      const step = a.next_step || "Abra o SOC AI Analyst (Triagem / Investigar) para o relatório detalhado.";
+      const extra = a.contain_result ? `<div class="out">contain: ${a.contain_result}</div>` : "";
+      return `<div class="alert"><span class="sev ${sev}">${k}</span> ${a.ip || ""}`
+        + `<div class="out">${step}</div>${extra}</div>`;
+    }).join("");
+  }
+
+  const sig = liveSig(alerts);
+  if (lastLiveSig === null) {
+    lastLiveSig = sig;
+    return;
+  }
+  if (sig && sig !== lastLiveSig) {
+    const newest = alerts[alerts.length - 1];
+    beepLive();
+    flashLive();
+    if (newest && newest.ip) $("ip").value = newest.ip;
+    setStatus(`ALERTA ${newest.kind} ${newest.ip} — use Triagem para o relatório`);
+  }
+  lastLiveSig = sig;
+}
+
+async function pollLive() {
+  try {
+    const data = await api("/api/alerts/live");
+    renderLive(data);
+  } catch (e) {
+    const el = $("liveAlertState");
+    if (el) el.textContent = "erro a ler /api/alerts/live: " + e.message;
+  }
+}
+
+pollLive();
+setInterval(pollLive, 2000);

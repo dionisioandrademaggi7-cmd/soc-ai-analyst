@@ -6,6 +6,19 @@
   <title>SOC AI Analyst</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .live-alert { border: 1px solid #3ee0b0; margin: 0 0 1rem; }
+    .live-alert.hot {
+      border-color: #ff6b4a;
+      animation: socpulse 0.7s ease 3;
+      background: rgba(255, 107, 74, 0.12);
+    }
+    @keyframes socpulse {
+      50% { box-shadow: 0 0 0 4px rgba(255, 107, 74, 0.45); }
+    }
+    #status.flash { color: #ff6b4a; font-weight: 700; }
+    #liveAlerts .alert { margin-bottom: 0.5rem; }
+  </style>
 </head>
 <body>
   <div class="app">
@@ -36,6 +49,11 @@
           <span class="pill" id="pillCount">0 alertas</span>
         </div>
       </header>
+      <section id="liveAlertCard" class="card live-alert">
+        <div class="card-title">Alerta autónomo</div>
+        <p id="liveAlertState">A ligar o watcher…</p>
+        <div id="liveAlerts" class="out">à espera de falhas SSH / logons novos</div>
+      </section>
       <section class="grid">
         <div class="card">
           <div class="card-title">Mapa</div>

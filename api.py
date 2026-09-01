@@ -1,6 +1,7 @@
 """
 SOC AI Analyst — API (Fase 4)
 Rode: uvicorn api:app --host 127.0.0.1 --port 8000
+O arranque da API já liga o alerter autónomo (SSH/logon) em background.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from containment import block_ip, unblock_ip, status as ufw_rules
 from session_watch import list_ssh_sessions, find_foreign_sessions, watch_once
 from geo import locate_many
 from sec_tools import host_defense_snapshot
+from alerter import start_background, stop_background, get_alerts, status as alerter_status
 
 app = FastAPI(title="SOC AI Analyst", version="4.0")
 app.add_middleware(
@@ -94,9 +96,34 @@ def pull_ips(results) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+@app.on_event("startup")
+def _arranca_alerter():
+    """Dashboard ligado = watcher autónomo. Sem botão para começar a vigiar."""
+    start_background(auto_block=False, execute=False)
+
+
+@app.on_event("shutdown")
+def _para_alerter():
+    stop_background()
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "service": "soc-ai-analyst"}
+
+
+@app.get("/api/alerts/live")
+def api_alerts_live():
+    """Anel em memória do alerter autónomo (BURST / LOGIN)."""
+    st = alerter_status()
+    return {
+        "running": st.get("running"),
+        "source": st.get("source"),
+        "hint": st.get("hint"),
+        "fail_threshold": st.get("fail_threshold"),
+        "window_sec": st.get("window_sec"),
+        "alerts": get_alerts(),
+    }
 
 
 @app.post("/api/triage")
