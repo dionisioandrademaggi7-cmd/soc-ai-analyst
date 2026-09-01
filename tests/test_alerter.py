@@ -1,14 +1,13 @@
 """
 Testes defensivos do alerter autónomo.
 
-Alimentam linhas sintéticas de auth.log em alerter.handle_line / _handle_parsed.
+Alimentam linhas sintéticas de auth.log em alerter.handle_line.
 Não abrem sockets, não fazem SSH, não chamam ufw real.
 """
 from __future__ import annotations
 
 import sys
 import unittest
-from collections import defaultdict, deque
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +23,12 @@ FAIL = (
 )
 ACCEPT = (
     "Sep  1 10:00:00 ubuntu sshd[1234]: Accepted password for alice from {ip} port 22 ssh2"
+)
+INVALID = (
+    "Sep  1 10:00:00 ubuntu sshd[1234]: Invalid user bob from {ip} port 22"
+)
+SUDO = (
+    "Sep  1 10:00:00 ubuntu sudo: alice : USER=root ; COMMAND=/bin/id"
 )
 
 
@@ -49,19 +54,28 @@ class AlerterTests(unittest.TestCase):
         for _ in range(n):
             alerter.handle_line(line, notify=notify)
 
-    def test_four_fails_same_ip_no_burst(self):
+    def test_single_fail_fires_immediately(self):
+        alerter.handle_line(FAIL.format(ip="203.0.113.10"), notify=True)
+        self.assertEqual(self._kinds(), ["FAIL"])
+
+    def test_invalid_and_sudo_fire_without_command(self):
+        alerter.handle_line(INVALID.format(ip="203.0.113.11"), notify=True)
+        alerter.handle_line(SUDO, notify=True)
+        self.assertEqual(self._kinds(), ["INVALID", "SUDO"])
+
+    def test_four_fails_are_four_fail_no_burst(self):
         self._feed_fails("203.0.113.10", 4, notify=True)
-        self.assertEqual(self._kinds(), [])
+        self.assertEqual(self._kinds(), ["FAIL"] * 4)
         self.assertEqual(len(alerter._fail_times["203.0.113.10"]), 4)
 
-    def test_fifth_fail_fires_burst(self):
+    def test_fifth_fail_fires_fail_and_burst(self):
         ip = "203.0.113.10"
         self._feed_fails(ip, 5, notify=True)
-        alerts = alerter.get_alerts()
-        self.assertEqual([a["kind"] for a in alerts], ["BURST"])
-        self.assertEqual(alerts[0]["ip"], ip)
-        self.assertTrue(alerts[0].get("notified"))
-        self.assertIn("Triagem", alerts[0].get("next_step") or "")
+        kinds = self._kinds()
+        self.assertEqual(kinds.count("FAIL"), 5)
+        self.assertEqual(kinds.count("BURST"), 1)
+        self.assertEqual(kinds[-1], "BURST")
+        self.assertIn("Triagem", alerter.get_alerts()[-1].get("next_step") or "")
 
     def test_accepted_from_non_whitelist_is_login(self):
         ip = "203.0.113.50"
@@ -82,20 +96,23 @@ class AlerterTests(unittest.TestCase):
         self.assertEqual(self._kinds(), [])
         self.assertEqual(len(alerter._fail_times[ip]), 4)
         alerter.handle_line(FAIL.format(ip=ip), notify=True)
-        self.assertEqual(self._kinds(), ["BURST"])
+        self.assertEqual(self._kinds(), ["FAIL", "BURST"])
 
     def test_cooldown_second_burst_does_not_fire(self):
         ip = "203.0.113.77"
         self._feed_fails(ip, 5, notify=True)
-        self.assertEqual(self._kinds(), ["BURST"])
+        self.assertEqual(self._kinds().count("BURST"), 1)
         self._feed_fails(ip, 5, notify=True)
-        self.assertEqual(self._kinds(), ["BURST"])
+        self.assertEqual(self._kinds().count("BURST"), 1)
+        self.assertEqual(self._kinds().count("FAIL"), 10)
 
     def test_login_still_allowed_after_burst(self):
         ip = "203.0.113.88"
         self._feed_fails(ip, 5, notify=True)
         alerter.handle_line(ACCEPT.format(ip=ip), notify=True)
-        self.assertEqual(self._kinds(), ["BURST", "LOGIN"])
+        kinds = self._kinds()
+        self.assertIn("BURST", kinds)
+        self.assertEqual(kinds[-1], "LOGIN")
 
     def test_auto_block_lab_nat_10_0_2_15_never_calls_block(self):
         alerter._auto_block = True
@@ -105,8 +122,9 @@ class AlerterTests(unittest.TestCase):
             self._feed_fails(ip, 5, notify=True)
             mock_block.assert_not_called()
         alerts = alerter.get_alerts()
-        self.assertEqual([a["kind"] for a in alerts], ["BURST"])
-        msg = (alerts[0].get("contain_result") or "").lower()
+        bursts = [a for a in alerts if a["kind"] == "BURST"]
+        self.assertEqual(len(bursts), 1)
+        msg = (bursts[0].get("contain_result") or "").lower()
         self.assertTrue(msg)
         self.assertIn("recusado", msg)
 

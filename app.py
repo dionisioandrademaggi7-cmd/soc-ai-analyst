@@ -6,8 +6,10 @@ from local_log_client import LocalLogClient
 from ai_analyst import AIAnalyst
 from containment import block_ip, unblock_ip
 import report_generator as rg
+from alerter import start_background, get_alerts, status as alerter_status
 
 st.set_page_config(page_title="SOC AI Analyst", layout="wide", initial_sidebar_state="expanded")
+start_background(auto_block=False, execute=False)
 
 st.markdown("""
 <style>
@@ -154,7 +156,29 @@ def pull_ips(results):
 
 SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
 
-tab1, tab2, tab3 = st.tabs(["TRIAGE", "INVESTIGATE", "CONTAIN"])
+tab0, tab1, tab2, tab3 = st.tabs(["LIVE", "TRIAGE", "INVESTIGATE", "CONTAIN"])
+
+# ========== LIVE (alerta autónomo, sem puxar comando) ==========
+with tab0:
+    ast = alerter_status()
+    st.markdown(
+        f'''<div class="panel"><div class="panel-title">ALERTER</div>
+        running={ast.get("running")} · fonte={ast.get("source")} · hint={ast.get("hint") or "—"}
+        </div>''',
+        unsafe_allow_html=True,
+    )
+    st.caption("Cada FAIL / INVALID / LOGIN / SUDO / SESSION novo aparece aqui sozinho. BURST é extra (5 falhas / 120s).")
+    rows = list(reversed(get_alerts()[-30:]))
+    if not rows:
+        st.info("A vigiar. Ainda não há eventos novos desde que o dashboard arrancou.")
+    else:
+        for a in rows:
+            st.markdown(
+                f"**{a.get('kind')}** `{a.get('ip')}` — {a.get('line','')[:160]}"
+            )
+            st.caption(a.get("next_step") or "")
+    if st.button("ATUALIZAR LIVE", key="live_refresh"):
+        st.rerun()
 
 # ========== TRIAGE ==========
 with tab1:

@@ -1,10 +1,10 @@
 """
-Motor de alerta autónomo SSH / logon.
+Motor de alerta autónomo.
 
-Vigia auth.log (ou journalctl / Windows 4625+4624), correlaciona falhas
-num intervalo deslizante e dispara sozinho: som + banner + notify.
-O operador deve abrir o SOC AI Analyst (Triagem / Investigar) para o
-relatório detalhado. Containment só com auto_block e dry-run por omissão.
+Vigia auth.log (ou journalctl / Windows) e dispara SOZINHO em cada evento
+novo de autenticação (FAIL, INVALID, LOGIN, SUDO, SESSION, SSH) — sem o
+operador puxar triagem nem o CLI. Rajada (BURST) é extra, às 5 falhas/120s.
+Containment só com auto_block e dry-run por omissão.
 """
 from __future__ import annotations
 
@@ -22,10 +22,13 @@ from pathlib import Path
 from session_watch import DEFAULT_WHITELIST as SESSION_WHITELIST
 from containment import block_ip, DEFAULT_WHITELIST as CONTAIN_WHITELIST
 
-# Mesmo regex do watcher.py original
-RE_LINE = re.compile(
-    r"(Failed password|Invalid user|authentication failure|Accepted password|Accepted publickey).*?"
-    r"(\d{1,3}(?:\.\d{1,3}){3})",
+RE_IP = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
+# Qualquer evento de autenticação / sshd / sudo — não só Failed/Accepted
+RE_EVENT = re.compile(
+    r"(Failed password|Failed publickey|Invalid user|authentication failure|"
+    r"Accepted password|Accepted publickey|maximum authentication|"
+    r"Too many authentication|sudo:|session opened|session closed|"
+    r"Disconnected from|Connection closed|sshd\[)",
     re.I,
 )
 
@@ -108,17 +111,21 @@ def _arm_cooldown(ip: str, kind: str) -> None:
 
 
 def _next_step(kind: str, ip: str) -> str:
-    if kind == "LOGIN":
-        return (
-            f"Abra o SOC AI Analyst (Triagem / Investigar) para o relatório detalhado. "
-            f"IP={ip} — próximo passo: validar se o logon é legítimo; "
-            f"se for suspeito, usar Contain (Executar block)."
-        )
-    return (
+    base = (
         f"Abra o SOC AI Analyst (Triagem / Investigar) para o relatório detalhado. "
-        f"IP={ip} — próximo passo: confirmar brute-force / tentativas sucessivas; "
-        f"se for suspeito, usar Contain (Executar block)."
+        f"IP={ip}."
     )
+    if kind == "LOGIN":
+        return base + " Validar se o logon é legítimo; se for suspeito, Contain (Executar block)."
+    if kind == "BURST":
+        return base + " Rajada de falhas — confirmar brute-force; se for suspeito, Contain (Executar block)."
+    if kind in ("FAIL", "INVALID"):
+        return base + " Tentativa de logon recusada. Continua a vigiar; use Triagem para o relatório."
+    if kind == "SUDO":
+        return base + " Evento sudo — confirmar se a elevação de privilégio é esperada."
+    if kind == "SESSION":
+        return base + " Sessão aberta/fechada. Confirmar se o utilizador é esperado."
+    return base
 
 
 def _notify(rec: dict) -> None:
@@ -197,10 +204,14 @@ def _maybe_contain(ip: str) -> str | None:
 
 
 def _fire(kind: str, ip: str, line: str) -> None:
-    if _in_cooldown(ip, kind):
+    # Cooldown só no BURST (não silenciar FAIL/LOGIN/SUDO individuais)
+    if kind == "BURST" and _in_cooldown(ip, kind):
         return
-    _arm_cooldown(ip, kind)
-    contain_result = _maybe_contain(ip)
+    if kind == "BURST":
+        _arm_cooldown(ip, kind)
+    contain_result = None
+    if kind in ("BURST", "LOGIN"):
+        contain_result = _maybe_contain(ip)
     rec = {
         "timestamp": _now_iso(),
         "kind": kind,
@@ -215,29 +226,67 @@ def _fire(kind: str, ip: str, line: str) -> None:
     _notify(rec)
 
 
+def classify_line(line: str) -> tuple[str, str] | None:
+    """Devolve (kind, ip) para qualquer evento de auth relevante, ou None."""
+    if not line or not line.strip():
+        return None
+    low = line.lower()
+    if " cron[" in low or "crond[" in low:
+        return None
+    if not RE_EVENT.search(line):
+        return None
+    ip_m = RE_IP.search(line)
+    ip = ip_m.group(1) if ip_m else "-"
+    if "accepted password" in low or "accepted publickey" in low:
+        return "LOGIN", ip
+    if "invalid user" in low:
+        return "INVALID", ip
+    if (
+        "failed password" in low
+        or "failed publickey" in low
+        or "authentication failure" in low
+        or "maximum authentication" in low
+        or "too many authentication" in low
+    ):
+        return "FAIL", ip
+    if "sudo:" in low:
+        return "SUDO", ip
+    if "session opened" in low or "session closed" in low:
+        return "SESSION", ip
+    if "sshd[" in low or "disconnected from" in low or "connection closed" in low:
+        return "SSH", ip
+    return "AUTH", ip
+
+
 def _handle_parsed(is_login: bool, ip: str, line: str, notify: bool) -> None:
-    if not ip or _is_whitelisted(ip):
+    """Compat: Windows 4624/4625."""
+    kind = "LOGIN" if is_login else "FAIL"
+    _emit(kind, ip, line, notify)
+
+
+def _emit(kind: str, ip: str, line: str, notify: bool) -> None:
+    if ip and _is_whitelisted(ip):
         return
     now = time.time()
-    if is_login:
+    if kind in ("FAIL", "INVALID") and ip and ip != "-":
+        with _lock:
+            _fail_times[ip].append(now)
+            n = _prune_fails(ip, now)
         if notify:
-            _fire("LOGIN", ip, line)
+            _fire(kind, ip, line)
+            if n >= FAIL_THRESHOLD:
+                _fire("BURST", ip, line)
         return
-    n = 0
-    with _lock:
-        _fail_times[ip].append(now)
-        n = _prune_fails(ip, now)
-    if notify and n >= FAIL_THRESHOLD:
-        _fire("BURST", ip, line)
+    if notify:
+        _fire(kind, ip or "-", line)
 
 
 def handle_line(line: str, notify: bool = True) -> None:
-    m = RE_LINE.search(line)
-    if not m:
+    parsed = classify_line(line)
+    if not parsed:
         return
-    kind_txt, ip = m.group(1), m.group(2)
-    is_login = "Accepted" in kind_txt
-    _handle_parsed(is_login, ip, line, notify)
+    kind, ip = parsed
+    _emit(kind, ip, line, notify)
 
 
 def _follow_file(path: Path) -> None:
@@ -282,11 +331,12 @@ def _journal_unit() -> str:
 def _follow_journal() -> None:
     global _source, _hint, _journal_proc
     unit = _journal_unit()
-    _source = f"journalctl -u {unit}"
+    _source = "journalctl auth/sshd/sudo"
     _hint = ""
     try:
         seed = subprocess.run(
-            ["journalctl", "-u", unit, "-n", "80", "--no-pager"],
+            ["journalctl", "-n", "80", "--no-pager",
+            "SYSLOG_FACILITY=4", "SYSLOG_FACILITY=10", "-t", "sshd", "-t", "sudo"],
             capture_output=True,
             text=True,
             timeout=15,
@@ -298,7 +348,8 @@ def _follow_journal() -> None:
 
     try:
         _journal_proc = subprocess.Popen(
-            ["journalctl", "-u", unit, "-f", "-n", "0", "--no-pager"],
+            ["journalctl", "-f", "-n", "0", "--no-pager",
+             "SYSLOG_FACILITY=4", "SYSLOG_FACILITY=10", "-t", "sshd", "-t", "sudo"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

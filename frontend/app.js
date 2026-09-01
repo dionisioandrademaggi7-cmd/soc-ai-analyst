@@ -173,7 +173,7 @@ function renderLive(data) {
   const alerts = data.alerts || [];
   const box = $("liveAlerts");
   if (!alerts.length) {
-    box.innerHTML = "<div class='out'>sem alertas autónomos ainda — a vigiar falhas SSH e logons</div>";
+    box.innerHTML = "<div class='out'>sem alertas ainda — cada FAIL/LOGIN/sudo/sessão novo aparece aqui sozinho</div>";
   } else {
     const last = alerts.slice(-8).reverse();
     box.innerHTML = last.map((a) => {

@@ -177,13 +177,14 @@ Fonte no UI: logs locais, mock ou Windows Event Log (`windows_log_client.py`).
 ## Alerta autónomo (`alerter.py`)
 
 O `watcher.py` antigo só imprimia linhas novas se o operador o lançasse à mão,
-e cada evento era isolado. Agora o motor correlaciona falhas **por IP** e dispara
-sozinho (som + banner + faixa no UI).
+Agora **cada evento novo** dispara sozinho (som + banner + faixa no UI), sem clicar em Triagem. BURST é só o extra da rajada.
 
 | Tipo | Quando dispara |
 |---|---|
-| **BURST** | 5 falhas de autenticação do mesmo IP em 120s (`Failed password` / `Invalid user` / `authentication failure`; no Windows, evento 4625) |
-| **LOGIN** | `Accepted password` / `Accepted publickey` (ou Windows 4624) de um IP **fora** da whitelist |
+| **FAIL / INVALID** | **cada** falha ou user inválido novo (não espera pela 5ª) |
+| **LOGIN** | cada `Accepted password` / `Accepted publickey` (ou Windows 4624) fora da whitelist |
+| **SUDO / SESSION / SSH** | sudo, sessão aberta/fechada, outras linhas sshd |
+| **BURST** | extra: 5 falhas do mesmo IP em 120s |
 
 O alerta soa sozinho (`notify-send` + BEL no Linux; Beep/balloon no Windows) e
 instruí a abrir **Triagem / Investigar** no SOC AI Analyst para o relatório
