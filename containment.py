@@ -75,17 +75,22 @@ def _run(cmd: list[str], dry_run: bool) -> tuple[bool, str]:
 
 
 def drop_ssh_from_ip(ip: str) -> str:
+    """Corta ligacoes/sessoes SSH ja estabelecidas desse IP (lab)."""
     notes = []
-    for cmd in (
-        ["sudo", "-n", "ss", "-K", "dst", ip, "dport", "22"],
+    candidates = [
+        ["sudo", "-n", "ss", "-K", "dst", ip, "dport", "=", "22"],
+        ["sudo", "-n", "ss", "-K", "dst", ip],
+        ["sudo", "-n", "conntrack", "-D", "-s", ip],
         ["sudo", "-n", "pkill", "-f", f"sshd:.*{ip}"],
-    ):
+        ["sudo", "-n", "pkill", "-f", f"sshd: {ip}"],
+    ]
+    for cmd in candidates:
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             extra = ((proc.stdout or "") + (proc.stderr or "")).strip()
-            notes.append(extra or f"{' '.join(cmd)} exit {proc.returncode}")
+            notes.append(f"{' '.join(cmd)} -> {proc.returncode} {extra}")
         except Exception as e:
-            notes.append(str(e))
+            notes.append(f"{' '.join(cmd)} -> {e}")
     return " | ".join(notes)
 
 
@@ -105,10 +110,13 @@ def block_ip(ip: str, dry_run: bool = True, extra_whitelist: set[str] | None = N
     if _is_whitelisted(ip, extra_whitelist):
         return ContainmentResult(False, "block", ip, "IP na whitelist — bloqueio recusado", dry_run=dry_run)
     # ufw deny from <ip>
-    ok, msg = _run(["sudo", "ufw", "deny", "from", ip], dry_run)
+    if not dry_run:
+        _run(["sudo", "-n", "ufw", "enable"], dry_run=False)
+
+    ok, msg = _run(["sudo", "-n", "ufw", "deny", "from", ip], dry_run)
     if ok and not dry_run:
         drop = drop_ssh_from_ip(ip)
-        msg = f"{msg} | {drop}"
+        msg = f"{msg} | drop: {drop}"
     _log("block", ip, msg, dry_run)
     return ContainmentResult(ok, "block", ip, msg, dry_run=dry_run)
 
