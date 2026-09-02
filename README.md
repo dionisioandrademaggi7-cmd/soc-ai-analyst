@@ -103,12 +103,11 @@ Gera `reports/investigation_<timestamp>.md`.
 
 ---
 
-## Fase 2 — Interface Web (Streamlit)
+## Fase 2 — Interface Web 
 
 A fase 2 reaproveitou a lógica da fase 1 sem reescrever nada — só ganhou uma camada
-de interface web (`app.py`, Streamlit) e a fonte de logs locais. **`app.py` continua
-no repositório**; a UI principal do lab passou a ser a FastAPI (fase 4), mas o
-Streamlit não foi removido.
+de interface web e a fonte de logs locais. continua
+no repositório**; a UI principal do lab passou a ser a FastAPI + frontend/ (fase 4).
 
 ```bash
 streamlit run app.py
