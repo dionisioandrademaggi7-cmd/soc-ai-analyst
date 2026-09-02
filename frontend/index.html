@@ -3,28 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SOC AI Analyst</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <title></title>
   <link rel="stylesheet" href="/static/styles.css" />
-  <style>
-    .live-alert { border: 1px solid #3ee0b0; margin: 0 0 1rem; }
-    .live-alert.hot {
-      border-color: #ff6b4a;
-      animation: socpulse 0.7s ease 3;
-      background: rgba(255, 107, 74, 0.12);
-    }
-    @keyframes socpulse {
-      50% { box-shadow: 0 0 0 4px rgba(255, 107, 74, 0.45); }
-    }
-    #status.flash { color: #ff6b4a; font-weight: 700; }
-    #liveAlerts .alert { margin-bottom: 0.5rem; }
-  </style>
 </head>
 <body>
   <div class="app">
     <aside class="rail">
-      <div class="brand">SOC</div>
-      <div class="brand-sub">AI Analyst</div>
+      <div class="brand"></div>
+      <div class="brand-sub"></div>
       <label>Fonte</label>
       <select id="source">
         <option value="local">Logs locais</option>
@@ -36,53 +22,61 @@
       <button id="btnTriage" class="btn">Triagem</button>
       <button id="btnSessions" class="btn ghost">Sessoes SSH</button>
       <button id="btnDefense" class="btn ghost">Defesa host</button>
-      <div class="rail-foot">fase 4</div>
+      <div class="rail-foot">fase 4 // cyber</div>
     </aside>
+
     <main>
       <header class="top">
         <div>
-          <h1>Centro de operacoes</h1>
-          <p id="status">Pronto</p>
+          <h1></h1>
+          <p id="status">sistema online</p>
         </div>
         <div class="pills">
           <span class="pill" id="pillFonte">—</span>
           <span class="pill" id="pillCount">0 alertas</span>
         </div>
       </header>
-      <section id="liveAlertCard" class="card live-alert">
-        <div class="card-title">Alerta autónomo</div>
-        <p id="liveAlertState">A ligar o watcher…</p>
-        <div id="liveAlerts" class="out">à espera de falhas SSH / logons novos</div>
-      </section>
+
       <section class="grid">
-        <div class="card">
-          <div class="card-title">Mapa</div>
-          <div class="globe"><div id="map"></div></div>
+        <div class="card map-card">
+          <div class="card-title">// threat_globe</div>
+          <div class="globe-frame">
+            <div id="map"></div>
+            <div class="hud-corner tl"></div>
+            <div class="hud-corner tr"></div>
+            <div class="hud-corner bl"></div>
+            <div class="hud-corner br"></div>
+          </div>
+          <p class="hint">LAN = pin lab · publico = geo · vermelho = ameaca</p>
         </div>
         <div class="card">
-          <div class="card-title">Diagnostico</div>
+          <div class="card-title">// diagnostico</div>
           <div id="diag" class="diag">Sem triagem ainda.</div>
         </div>
       </section>
+
       <section class="grid two">
         <div class="card">
-          <div class="card-title">Alertas</div>
+          <div class="card-title">// alertas</div>
           <div id="alerts"></div>
         </div>
         <div class="card">
-          <div class="card-title">Contain</div>
+          <div class="card-title">// contain</div>
           <input id="ip" placeholder="IP alvo" />
           <div class="row">
             <button id="btnDry" class="btn ghost">Simular block</button>
             <button id="btnLive" class="btn danger">Executar block</button>
+            <button id="btnBlockLast" class="btn danger">Bloquear ultimo IP</button>
           </div>
           <div id="containOut" class="out"></div>
-          <div class="card-title tight">Sessoes fora da whitelist</div>
+          <div class="card-title tight">// ao vivo</div>
           <div id="foreign" class="out">—</div>
         </div>
       </section>
     </main>
   </div>
+
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/app.js"></script>
 </body>
